@@ -1,0 +1,8 @@
+{
+    "api_key": null,
+    "model": "gpt-4.1-mini",
+    "dbl_pipeline": "default",
+    "host": "127.0.0.1",
+    "port": 8787
+  }
+  
