@@ -29,6 +29,8 @@ class RunRequest(BaseModel):
     max_tokens: int = 1024
     temperature: float = 0.7
     dry_run: bool = False
+    pipeline_mode: str = "basic_safety"  # minimal, basic_safety, standard, enterprise
+    enabled_policies: Optional[list[str]] = None  # Explicit policy override
 
 
 @asynccontextmanager
@@ -63,7 +65,7 @@ def create_app() -> FastAPI:
             "Small reference service that exposes a governed LLM boundary. "
             "Requests will be routed through DBL policies and traced via KL."
         ),
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
 
@@ -107,6 +109,8 @@ def create_app() -> FastAPI:
             channel=request.channel,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
+            pipeline_mode=request.pipeline_mode,
+            enabled_policies=request.enabled_policies,
         )
         
         try:

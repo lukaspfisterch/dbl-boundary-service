@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (2024-12-04)
+
+- Pipeline modes: minimal, basic_safety, standard, enterprise
+- Policy toggles with smart override
+- Resizable UI split
+- Collapsible JSON sections
+- Syntax highlighting
+- Improved API key UX
+- 9 smoke tests
+
 ## 0.1.0 (2024-12-04)
 
 Initial release.
@@ -9,4 +19,3 @@ Initial release.
 - Insights panel showing BoundaryContext, policies, trace
 - OpenAI Chat adapter with dry-run mode
 - 5 smoke tests
-

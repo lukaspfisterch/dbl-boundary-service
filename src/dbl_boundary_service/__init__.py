@@ -6,5 +6,5 @@ from .main import create_app, run
 
 __all__ = ["create_app", "run"]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 

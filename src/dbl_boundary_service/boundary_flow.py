@@ -6,11 +6,12 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from kl_kernel_logic import PsiDefinition
-from dbl_core import BoundaryContext, BoundaryResult
+from dbl_core import BoundaryContext, BoundaryResult, PolicyDecision
 from dbl_main import Pipeline
 
 from .config import BoundaryConfig
 from .llm_adapter import LlmPayload, LlmResult, call_openai_chat, dry_run_llm
+from .pipeline_factory import create_pipeline, create_default_pipeline, create_minimal_pipeline, create_strict_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +27,33 @@ class BoundaryRequest:
     channel: Optional[str] = None
     max_tokens: int = 1024
     temperature: float = 0.7
+    pipeline_mode: str = "basic_safety"  # minimal, basic_safety, standard, enterprise
+    enabled_policies: Optional[list[str]] = None  # Explicit policy override
+
+
+@dataclass(frozen=True)
+class RequestEnvelope:
+    """
+    Envelope wrapping the LLM request for policy evaluation.
+    Contains all information policies need to make decisions.
+    """
+    prompt: str
+    model: str
+    max_tokens: int
+    temperature: float
+    caller_id: str
+    tenant_id: Optional[str]
+    channel: Optional[str]
+    
+    def to_metadata(self) -> dict[str, Any]:
+        """Convert to metadata dict for BoundaryContext."""
+        return {
+            "prompt": self.prompt,
+            "prompt_length": len(self.prompt),
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        }
 
 
 @dataclass
@@ -65,6 +93,21 @@ class BoundaryResponse:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline selection
+# ---------------------------------------------------------------------------
+
+def _get_pipeline(mode: str, enabled_policies: Optional[list[str]] = None) -> Pipeline:
+    """
+    Select pipeline based on mode and optional policy override.
+    
+    Args:
+        mode: Preset mode (minimal, basic_safety, standard, enterprise)
+        enabled_policies: Optional explicit list of policies (overrides preset)
+    """
+    return create_pipeline(mode=mode, enabled_policies=enabled_policies)
+
+
+# ---------------------------------------------------------------------------
 # run_boundary_flow
 # The main orchestration function that ties DBL, KL, and LLM together.
 # ---------------------------------------------------------------------------
@@ -87,7 +130,21 @@ async def run_boundary_flow(
     timestamp = datetime.now(timezone.utc).isoformat()
     
     # -------------------------------------------------------------------------
-    # Step 1: Build PsiDefinition
+    # Step 1: Build RequestEnvelope
+    # Contains all information for policy evaluation.
+    # -------------------------------------------------------------------------
+    envelope = RequestEnvelope(
+        prompt=request.prompt,
+        model=config.model,
+        max_tokens=request.max_tokens,
+        temperature=request.temperature,
+        caller_id="boundary_service",
+        tenant_id=request.tenant_id,
+        channel=request.channel,
+    )
+    
+    # -------------------------------------------------------------------------
+    # Step 2: Build PsiDefinition
     # This defines WHAT we want to execute (an LLM chat completion).
     # -------------------------------------------------------------------------
     psi = PsiDefinition(
@@ -102,35 +159,32 @@ async def run_boundary_flow(
     )
     
     # -------------------------------------------------------------------------
-    # Step 2: Build BoundaryContext for DBL
+    # Step 3: Build BoundaryContext for DBL
     # This is what the policies will evaluate.
+    # The 'prompt' key is required by ContentSafetyPolicy.
     # -------------------------------------------------------------------------
     boundary_ctx = BoundaryContext(
         psi=psi,
-        caller_id="boundary_service",
-        tenant_id=request.tenant_id,
-        channel=request.channel,
-        metadata={
-            "prompt_length": len(request.prompt),
-            "model": config.model,
-            "max_tokens": request.max_tokens,
-        },
+        caller_id=envelope.caller_id,
+        tenant_id=envelope.tenant_id,
+        channel=envelope.channel,
+        metadata=envelope.to_metadata(),
     )
     
     # -------------------------------------------------------------------------
-    # Step 3: Run DBL pipeline
+    # Step 4: Select and run DBL pipeline
     # Policies decide: allow / modify / block
-    # For now: empty pipeline (all requests allowed).
-    # In production: load pipeline from config.dbl_pipeline.
+    # User can override with enabled_policies
     # -------------------------------------------------------------------------
-    pipeline = Pipeline(name=config.dbl_pipeline, policies=[])
+    pipeline = _get_pipeline(request.pipeline_mode, request.enabled_policies)
     dbl_result: BoundaryResult = pipeline.evaluate(boundary_ctx)
     
     policy_decisions = [
         {
-            "policy": d.policy_name,
+            "policy": d.details.get("policy", "unknown"),
             "outcome": d.outcome,
             "reason": d.reason,
+            "details": dict(d.details),
         }
         for d in dbl_result.decisions
     ]
