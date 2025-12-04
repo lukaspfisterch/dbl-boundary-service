@@ -94,6 +94,10 @@ curl -X POST http://127.0.0.1:8787/run \
 ## Learn More
 
 - [KL Execution Theory](https://github.com/lukaspfisterch/kl-execution-theory) - Theoretical foundation for deterministic execution
+- [KL Kernel Logic](https://github.com/lukaspfisterch/kl-kernel-logic) - Deterministic execution core
+- [DBL Core](https://github.com/lukaspfisterch/dbl-core) - Boundary primitives and policy framework
+- [DBL Main](https://github.com/lukaspfisterch/dbl-main) - Policy pipelines and implementations
+- **[DBL Boundary Service](https://github.com/lukaspfisterch/dbl-boundary-service) 👉 You are here** - Reference web UI and usage interface
 
 ---
 
