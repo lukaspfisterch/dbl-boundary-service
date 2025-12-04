@@ -17,6 +17,46 @@ Opens **http://127.0.0.1:8787** in your browser.
 2. Type a prompt
 3. Click "Run" - see your request filtered through safety policies
 
+## Installation Guide
+
+For a clean installation on Windows with full control over dependencies:
+
+<details>
+<summary>Windows PowerShell Installation (click to expand)</summary>
+
+1. **Open PowerShell and navigate to your directory**
+   ```powershell
+   cd <your-directory>
+   ```
+
+2. **Create and activate virtual environment**
+   ```powershell
+   py -3 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install --upgrade pip
+   ```
+
+3. **Install the application**
+   ```powershell
+   python -m pip install dbl-boundary-service
+   ```
+
+4. **Verify installation (optional)**
+   ```powershell
+   python -m pip show dbl-boundary-service
+   ```
+
+5. **Start the service**
+   ```powershell
+   dbl-boundary
+   ```
+
+Press **CTRL+C** to stop the service.
+
+Your browser will automatically open the Boundary Service interface on **http://127.0.0.1:8787**
+
+</details>
+
 ## What It Does
 
 **Without this service:**
