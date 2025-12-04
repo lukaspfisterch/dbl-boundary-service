@@ -17,6 +17,8 @@ Opens **http://127.0.0.1:8787** in your browser.
 2. Type a prompt
 3. Click "Run" - see your request filtered through safety policies
 
+![DBL Boundary Service UI](screenshots/dbl-boundary-ui-example.png)
+
 ## Installation Guide
 
 For a clean installation on Windows with full control over dependencies:
