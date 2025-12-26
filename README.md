@@ -21,7 +21,7 @@ Open http://127.0.0.1:8787
 
 ## Execution flow
 
-Input -> Boundary admission (L) -> Policy evaluation (G) -> DECISION event (V) -> Optional execution -> Observations
+Input -> Boundary admission (L) -> Policy evaluation (G) -> DECISION event written to V -> Optional execution -> Observations
 
 ## Boundary configurations
 
@@ -33,6 +33,8 @@ Presets are concrete boundary configurations, not toggles. Each preset is a poli
 | basic_safety | reject prompt injection patterns |
 | standard | add rate limiting to safety checks |
 | enterprise | strict safety with tight rate limits |
+
+For identical input and configuration, the same DECISION is produced.
 
 ## Dry run (no LLM)
 
