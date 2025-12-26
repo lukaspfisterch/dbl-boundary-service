@@ -43,6 +43,8 @@ The UI exposes the following outputs for each run:
 
 Observations and timing metrics are non-normative and MUST NOT affect decisions.
 
+![DBL Boundary Service UI](screenshots/dbl-boundary-ui-example.png)
+
 ## API usage
 
 ```bash
