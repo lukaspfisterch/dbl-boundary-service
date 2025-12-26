@@ -1,6 +1,14 @@
 # DBL Boundary Service Demo
 
-Reference UI and service for deterministic boundary evaluation. Each request produces explicit DECISION events in V (append-only). Observations are non-normative.
+This repository exists to make a boundary decision model concrete and testable. The service is a reference implementation that makes decision timing and replayability explicit.
+
+Guiding question: What happens when every Allow or Deny decision is explicit, replayable, and made before execution?
+
+## Core invariant
+
+- DECISION is the only normative effect.
+- DECISION is produced before any execution.
+- Observations are visible, but not normative.
 
 ## Quick Start
 
@@ -11,37 +19,41 @@ dbl-boundary
 
 Open http://127.0.0.1:8787
 
-## What it does
+## Execution flow
 
-Flow:
+Input -> Boundary admission (L) -> Policy evaluation (G) -> DECISION event (V) -> Optional execution -> Observations
 
-Input -> Boundary policies -> DECISION -> LLM call -> Observations
+## Boundary configurations
 
-DECISION is produced before any LLM call and is the only normative effect in V.
+Presets are concrete boundary configurations, not toggles. Each preset is a policy envelope with a fixed intent.
 
-## Demo presets
-
-| Preset | Purpose |
+| Configuration | Boundary intent |
 |--------|---------|
-| minimal | no policies (testing only) |
-| basic_safety | light content safety |
-| standard | content safety and rate limiting |
-| enterprise | strict content safety and rate limiting |
+| minimal | admit everything, record decision only |
+| basic_safety | reject prompt injection patterns |
+| standard | add rate limiting to safety checks |
+| enterprise | strict safety with tight rate limits |
 
 ## Dry run (no LLM)
 
-Use "Dry run" to exercise the full boundary flow without calling the LLM.
+Dry run demonstrates governance without execution. The outcome is INTENT plus DECISION, and no EXECUTION event. This isolates G from the kernel by design.
 
-## Observable outputs
+## Normative vs observational outputs
 
-The UI exposes the following outputs for each run:
+Normative outputs (part of V):
 
-- Outcome and DECISION events
-- Request context and Psi definition
-- LLM payload and LLM result (when executed)
-- Observations (request id, timestamps, trace id)
+- DECISION events
 
-Observations and timing metrics are non-normative and MUST NOT affect decisions.
+Observational outputs (not part of V):
+
+- request ids
+- timestamps
+- traces
+- LLM output
+
+Observations MUST NOT affect decisions.
+
+The UI surfaces both to make the separation explicit.
 
 ![DBL Boundary Service UI](screenshots/dbl-boundary-ui-example.png)
 
@@ -57,8 +69,10 @@ curl -X POST http://127.0.0.1:8787/run \
   }'
 ```
 
-## Learn more
+pipeline_mode selects the boundary configuration. dry_run prevents execution, not decision.
+
+## Theory and contracts
+
+This repo is the reference UI and service. The theory, axioms, and contracts live in the landing repository:
 
 Deterministic Boundary Layer: https://github.com/lukaspfisterch/deterministic-boundary-layer
-
-This repo is the reference UI/service. The theory and ecosystem map live there.
