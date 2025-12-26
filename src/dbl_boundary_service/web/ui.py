@@ -17,7 +17,7 @@ def render_index() -> str:
     <html lang="en">
     <head>
       <meta charset="utf-8">
-      <title>DBL Boundary Service</title>
+      <title>DBL Boundary Service Demo</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       
       <!-- Syntax highlighting -->
@@ -36,50 +36,33 @@ def render_index() -> str:
           overflow: hidden;
         }
         
-        /* Main boundary UI layout - Resizable split */
+        /* Main boundary UI layout - two column grid */
         .root {
-          display: flex;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           height: 100vh;
-          position: relative;
         }
         
         .left {
-          min-width: 20%;
-          max-width: 80%;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
           padding: 24px;
           background: radial-gradient(circle at top left, #111827, #020617);
           overflow-y: auto;
         }
         
-        /* Resizable divider */
-        .divider {
-          width: 8px;
-          background: #1f2937;
-          cursor: col-resize;
-          position: relative;
-          transition: background 0.2s;
-        }
-        
-        .divider:hover {
-          background: #374151;
-        }
-        
-        .divider::after {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          width: 2px;
-          height: 40px;
-          background: #4b5563;
-        }
-        
         .right {
-          flex: 1;
+          width: 100%;
           padding: 24px;
           background: radial-gradient(circle at top right, #020617, #020617);
           overflow-y: auto;
+        }
+
+        @media (max-width: 960px) {
+          .root {
+            grid-template-columns: 1fr;
+          }
         }
         
         h1 {
@@ -177,6 +160,23 @@ def render_index() -> str:
           font-size: 12px;
           color: #6b7280;
           margin-bottom: 16px;
+        }
+
+        .left-footer {
+          margin-top: auto;
+          font-size: 11px;
+          color: #9ca3af;
+        }
+
+        .left-footer a {
+          color: #9ca3af;
+          text-decoration: none;
+          border-bottom: 1px solid rgba(156, 163, 175, 0.4);
+        }
+
+        .left-footer a:hover {
+          color: #e5e7eb;
+          border-bottom-color: rgba(229, 231, 235, 0.7);
         }
         
         .badge {
@@ -457,6 +457,48 @@ def render_index() -> str:
           color: #6b7280;
           font-style: italic;
         }
+
+        /* Live feed */
+        .feed-list {
+          margin: 0;
+          padding: 0;
+          list-style: none;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .feed-item {
+          padding: 8px 10px;
+          border-radius: 8px;
+          border: 1px solid #1f2937;
+          background: rgba(15, 23, 42, 0.6);
+          font-size: 12px;
+        }
+
+        .feed-item time {
+          color: #9ca3af;
+          font-size: 11px;
+          margin-right: 8px;
+        }
+
+        .feed-item .feed-event {
+          color: #e5e7eb;
+          font-weight: 600;
+        }
+
+        .feed-item .feed-details {
+          color: #9ca3af;
+          font-size: 11px;
+          margin-top: 4px;
+          white-space: pre-wrap;
+        }
+
+        .feed-status {
+          font-size: 11px;
+          color: #9ca3af;
+          margin-top: 6px;
+        }
       </style>
     </head>
     <body>
@@ -465,15 +507,15 @@ def render_index() -> str:
         <div class="left" id="leftPanel">
           <div class="badge">
             <span class="badge-dot"></span>
-            <span>DBL Boundary Service</span>
+            <span>DBL Boundary Service Demo</span>
           </div>
-          <h1>Governed LLM boundary</h1>
+          <h1>DBL Boundary Service Demo</h1>
           <p class="tagline">
-            Small deterministic front end that will route your LLM calls through DBL and KL.
+            Deterministic boundary evaluation with explicit DECISION events (V append-only).
           </p>
 
           <div class="row">
-            <h2>Connection</h2>
+            <h2>LLM Connection</h2>
             <div id="apiKeySection">
               <label for="apiKey">OpenAI API key</label>
               <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
@@ -487,13 +529,13 @@ def render_index() -> str:
           </div>
 
           <div class="row">
-            <h2>Prompt</h2>
-            <label for="prompt">Prompt</label>
+            <h2>Input</h2>
+            <label for="prompt">Input</label>
             <textarea id="prompt" placeholder="Ask the model something..."></textarea>
           </div>
 
           <div class="config-section">
-            <label for="pipelineMode">Pipeline mode</label>
+            <label for="pipelineMode">Policy preset</label>
             <select id="pipelineMode">
               <option value="minimal">minimal – No policies (testing only)</option>
               <option value="basic_safety" selected>basic_safety – Light content safety only</option>
@@ -502,7 +544,7 @@ def render_index() -> str:
             </select>
             
             <div class="policy-toggles">
-              <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">Override policies:</div>
+              <div style="font-size: 11px; color: #9ca3af; margin-bottom: 6px;">Policy overrides:</div>
               <div class="policy-toggle-item">
                 <label>
                   <input type="checkbox" id="policyContentSafety" />
@@ -528,12 +570,19 @@ def render_index() -> str:
           <p style="font-size: 11px; margin-top: 10px;">
             "Run" requires an API key. "Dry run" tests the full DBL+KL flow without calling the LLM.
           </p>
+
+          <div class="left-footer">
+            Learn more: <a href="https://github.com/lukaspfisterch/deterministic-boundary-layer" target="_blank" rel="noopener noreferrer">Deterministic Boundary Layer</a>
+          </div>
         </div>
         
-        <!-- Resizable divider -->
-        <div class="divider" id="divider"></div>
-        
         <div class="right" id="rightPanel">
+          <div class="panel" id="liveFeedPanel" style="margin-bottom: 16px;">
+            <h3>Live feed</h3>
+            <p>Request lifecycle events for the current run.</p>
+            <ul class="feed-list" id="feedList"></ul>
+            <div class="feed-status" id="feedStatus">Idle</div>
+          </div>
           <div class="panel" id="insightsPanel">
             <h3>Execution and policy insights</h3>
             <p>
@@ -561,6 +610,7 @@ def render_index() -> str:
         llmResult: false,
         trace: false
       };
+      let liveFeedSource = null;
 
       // Elements
       const keyInput = document.getElementById("apiKey");
@@ -572,48 +622,11 @@ def render_index() -> str:
       const changeKeyBtn = document.getElementById("changeKeyBtn");
       const apiKeySection = document.getElementById("apiKeySection");
       const apiKeyStatus = document.getElementById("apiKeyStatus");
-      const leftPanel = document.getElementById("leftPanel");
-      const rightPanel = document.getElementById("rightPanel");
-      const divider = document.getElementById("divider");
-      const root = document.getElementById("root");
       const pipelineModeSelect = document.getElementById("pipelineMode");
       const policyContentSafety = document.getElementById("policyContentSafety");
       const policyRateLimit = document.getElementById("policyRateLimit");
-
-      // Resizable split implementation
-      let isResizing = false;
-      let startX = 0;
-      let startLeftWidth = 0;
-
-      divider.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        startX = e.clientX;
-        startLeftWidth = leftPanel.offsetWidth;
-        document.body.style.cursor = 'col-resize';
-        e.preventDefault();
-      });
-
-      document.addEventListener('mousemove', (e) => {
-        if (!isResizing) return;
-        
-        const delta = e.clientX - startX;
-        const newLeftWidth = startLeftWidth + delta;
-        const totalWidth = root.offsetWidth;
-        const minWidth = totalWidth * 0.2;
-        const maxWidth = totalWidth * 0.8;
-        
-        if (newLeftWidth >= minWidth && newLeftWidth <= maxWidth) {
-          leftPanel.style.width = newLeftWidth + 'px';
-          leftPanel.style.flexShrink = '0';
-        }
-      });
-
-      document.addEventListener('mouseup', () => {
-        if (isResizing) {
-          isResizing = false;
-          document.body.style.cursor = '';
-        }
-      });
+      const feedList = document.getElementById("feedList");
+      const feedStatus = document.getElementById("feedStatus");
 
       // API Key UX
       saveKeyBtn.addEventListener("click", async () => {
@@ -716,6 +729,7 @@ def render_index() -> str:
           return;
         }
 
+        resetLiveFeed();
         insightsPanel.innerHTML = '<p class="loading">Running...</p>';
 
         // Build request body
@@ -738,8 +752,10 @@ def render_index() -> str:
           });
           const data = await res.json();
           renderInsights(data);
+          startLiveFeed(data.snapshot.request_id);
         } catch (err) {
           insightsPanel.innerHTML = `<p style="color: #ef4444;">Error: ${err.message}</p>`;
+          setFeedStatus("Error");
         }
       }
 
@@ -782,7 +798,7 @@ def render_index() -> str:
         ].filter(x => x !== null).join('');
         
         insightsPanel.innerHTML = `
-          <h3>Result: ${statusBadge}</h3>
+          <h3>Outcome: ${statusBadge}</h3>
           ${traceControls}
           ${sections}
         `;
@@ -822,7 +838,7 @@ def render_index() -> str:
         const jsonContent = `<code class="language-json">${JSON.stringify(decisions, null, 2)}</code>`;
         
         return renderCollapsibleSection(
-          `Policy Decisions (${decisions.length})`,
+          `DECISION events (${decisions.length})`,
           `
             <div class="policy-list">${policyList}</div>
             <details style="margin-top: 12px;">
@@ -839,7 +855,7 @@ def render_index() -> str:
         return `
           <div class="collapsible-section">
             <div class="section-title">
-              DBL Outcome: <span class="outcome-${s.dbl_outcome}">${s.dbl_outcome.toUpperCase()}</span>
+              Boundary outcome: <span class="outcome-${s.dbl_outcome}">${s.dbl_outcome.toUpperCase()}</span>
             </div>
           </div>
         `;
@@ -847,32 +863,33 @@ def render_index() -> str:
 
       function renderBoundaryContextSection(s) {
         const content = `<code class="language-json">${JSON.stringify(s.boundary_context, null, 2)}</code>`;
-        return renderCollapsibleSection('BoundaryContext', `<pre>${content}</pre>`, 'boundaryContext', collapsedSections.boundaryContext);
+        return renderCollapsibleSection('Request context', `<pre>${content}</pre>`, 'boundaryContext', collapsedSections.boundaryContext);
       }
 
       function renderPsiDefinitionSection(s) {
         const content = `<code class="language-json">${JSON.stringify(s.psi_definition, null, 2)}</code>`;
-        return renderCollapsibleSection('PsiDefinition', `<pre>${content}</pre>`, 'psiDefinition', collapsedSections.psiDefinition);
+        return renderCollapsibleSection('Psi definition', `<pre>${content}</pre>`, 'psiDefinition', collapsedSections.psiDefinition);
       }
 
       function renderLlmPayloadSection(s) {
         const content = `<code class="language-json">${JSON.stringify(s.llm_payload, null, 2)}</code>`;
-        return renderCollapsibleSection('LLM Payload', `<pre>${content}</pre>`, 'llmPayload', collapsedSections.llmPayload);
+        return renderCollapsibleSection('LLM payload', `<pre>${content}</pre>`, 'llmPayload', collapsedSections.llmPayload);
       }
 
       function renderLlmResultSection(s) {
         const content = `<code class="language-json">${JSON.stringify(s.llm_result, null, 2)}</code>`;
-        return renderCollapsibleSection('LLM Result', `<pre>${content}</pre>`, 'llmResult', collapsedSections.llmResult);
+        return renderCollapsibleSection('LLM result', `<pre>${content}</pre>`, 'llmResult', collapsedSections.llmResult);
       }
 
       function renderTraceSection(s) {
         const content = `
+          <p style="font-size: 11px; margin: 0 0 8px 0; color: #9ca3af;">Observations are non-normative.</p>
           <p style="font-size: 11px; margin: 4px 0;"><strong>Request ID:</strong> ${s.request_id}</p>
-          <p style="font-size: 11px; margin: 4px 0;"><strong>Execution Trace:</strong> ${s.execution_trace_id || 'N/A'}</p>
+          <p style="font-size: 11px; margin: 4px 0;"><strong>Execution trace:</strong> ${s.execution_trace_id || 'N/A'}</p>
           <p style="font-size: 11px; margin: 4px 0;"><strong>Timestamp:</strong> ${s.timestamp}</p>
           <p style="font-size: 11px; margin: 4px 0;"><strong>Dry Run:</strong> ${s.dry_run}</p>
         `;
-        return renderCollapsibleSection('Trace', content, 'trace', collapsedSections.trace);
+        return renderCollapsibleSection('Observations', content, 'trace', collapsedSections.trace);
       }
 
       function renderCollapsibleSection(title, content, key, collapsed) {
@@ -927,6 +944,76 @@ def render_index() -> str:
 
       function escapeHtml(str) {
         return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function resetLiveFeed() {
+        if (liveFeedSource) {
+          liveFeedSource.close();
+          liveFeedSource = null;
+        }
+        feedList.innerHTML = '';
+        setFeedStatus('Waiting for events');
+      }
+
+      function setFeedStatus(text) {
+        feedStatus.textContent = text;
+      }
+
+      function appendFeedItem(eventName, payload) {
+        const item = document.createElement('li');
+        item.className = 'feed-item';
+        const time = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString() : 'n/a';
+        const details = payload.details && Object.keys(payload.details).length > 0
+          ? JSON.stringify(payload.details, null, 2)
+          : '';
+        item.innerHTML = `
+          <div><time>${time}</time><span class="feed-event">${eventName}</span></div>
+          ${details ? `<div class="feed-details">${escapeHtml(details)}</div>` : ''}
+        `;
+        feedList.appendChild(item);
+        if (feedList.children.length > 200) {
+          feedList.removeChild(feedList.firstChild);
+        }
+      }
+
+      function startLiveFeed(requestId) {
+        if (!requestId) {
+          return;
+        }
+        if (liveFeedSource) {
+          liveFeedSource.close();
+        }
+        setFeedStatus('Connected');
+        liveFeedSource = new EventSource(`/events/${requestId}`);
+        const eventNames = [
+          "request_received",
+          "boundary_context_built",
+          "policy_decision",
+          "dbl_outcome",
+          "llm_payload_ready",
+          "llm_called",
+          "llm_result_received",
+          "blocked",
+          "error",
+          "finished"
+        ];
+        eventNames.forEach((name) => {
+          liveFeedSource.addEventListener(name, (ev) => {
+            const payload = JSON.parse(ev.data || "{}");
+            appendFeedItem(name, payload);
+            if (name === "finished") {
+              setFeedStatus("Completed");
+              liveFeedSource.close();
+              liveFeedSource = null;
+            }
+            if (name === "error") {
+              setFeedStatus("Error");
+            }
+          });
+        });
+        liveFeedSource.onerror = () => {
+          setFeedStatus("Disconnected");
+        };
       }
 
       // Make functions globally available for inline handlers

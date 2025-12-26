@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import json
 import logging
 import webbrowser
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+from uuid import uuid4
 
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .config import get_dev_config, BoundaryConfig
 from .security import api_key_store
 from .web.ui import render_index
 from .boundary_flow import BoundaryRequest, run_boundary_flow
+from .telemetry import event_bus, setup_logging, RunLogEntry, append_run_log
 
 logger = logging.getLogger("dbl_boundary_service")
 
@@ -40,6 +43,7 @@ async def lifespan(app: FastAPI):
     Loads config and prepares DBL/KL wiring.
     """
     global _config
+    setup_logging()
     logger.info("Starting dbl-boundary-service")
     _config = get_dev_config()
     logger.info(f"Loaded config: model={_config.model}, pipeline={_config.dbl_pipeline}")
@@ -86,6 +90,25 @@ def create_app() -> FastAPI:
     async def index() -> str:
         return render_index()
 
+    @app.get("/events/{request_id}")
+    async def events(request_id: str) -> StreamingResponse:
+        queue = event_bus.get_queue(request_id)
+        if queue is None:
+            raise HTTPException(status_code=404, detail="Unknown request_id")
+
+        async def event_stream():
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    payload = json.dumps(item, ensure_ascii=True)
+                    yield f"event: {item['event']}\ndata: {payload}\n\n"
+            finally:
+                event_bus.cleanup(request_id)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
     @app.post("/run", response_class=JSONResponse)
     async def run(request: RunRequest) -> dict[str, Any]:
         """
@@ -103,6 +126,10 @@ def create_app() -> FastAPI:
         if not api_key_store.is_set() and not request.dry_run:
             raise HTTPException(status_code=400, detail="API key not set. Use /set-key first or enable dry_run.")
         
+        request_id = str(uuid4())
+        event_bus.ensure_queue(request_id)
+        await event_bus.emit(request_id, "request_received", {"dry_run": request.dry_run})
+
         boundary_request = BoundaryRequest(
             prompt=request.prompt,
             tenant_id=request.tenant_id,
@@ -118,10 +145,32 @@ def create_app() -> FastAPI:
                 request=boundary_request,
                 config=_config,
                 dry_run=request.dry_run,
+                request_id=request_id,
+                event_emitter=event_bus.emit,
             )
         except Exception as e:
+            await event_bus.emit(request_id, "error", {"message": str(e)})
+            await event_bus.finish(request_id)
             logger.exception("Boundary flow failed")
             raise HTTPException(status_code=500, detail=str(e))
+
+        await event_bus.finish(request_id)
+        append_run_log(
+            RunLogEntry(
+                request_id=request_id,
+                timestamp=response.snapshot.timestamp,
+                dry_run=request.dry_run,
+                pipeline_mode=request.pipeline_mode,
+                dbl_outcome=response.dbl_outcome,
+                blocked=response.blocked,
+                block_reason=response.block_reason,
+                policy_eval_ms=response.policy_eval_ms,
+                llm_call_ms=response.llm_call_ms,
+                prompt_length=response.prompt_length,
+                model=response.model,
+                max_tokens=response.max_tokens,
+            )
+        )
         
         return {
             "content": response.content,

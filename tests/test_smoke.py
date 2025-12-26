@@ -31,8 +31,8 @@ def test_index_serves_html() -> None:
 
     assert response.status_code == 200
     assert response.headers.get("content-type", "").startswith("text/html")
-    assert "DBL Boundary Service" in response.text
-    assert "Governed LLM boundary" in response.text
+    assert "DBL Boundary Service Demo" in response.text
+    assert "Deterministic boundary evaluation with explicit DECISION events (V append-only)." in response.text
 
 
 def test_set_key_stores_api_key() -> None:

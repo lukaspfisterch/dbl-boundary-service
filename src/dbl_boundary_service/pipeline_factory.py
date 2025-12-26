@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Optional
 
-from dbl_main import Pipeline, Policy
-from dbl_main.policies.rate_limit import RateLimitPolicy
-from dbl_main.policies.content_safety import ContentSafetyPolicy
+from dbl_policy import (
+    DecisionOutcome,
+    Policy,
+    PolicyDecision,
+    PolicyId,
+    PolicyVersion,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -12,9 +17,12 @@ from dbl_main.policies.content_safety import ContentSafetyPolicy
 # Maps policy names to their factory classes
 # ---------------------------------------------------------------------------
 
+POLICY_CONTENT_SAFETY = "content-safety"
+POLICY_RATE_LIMIT = "rate-limit"
+
 KNOWN_POLICIES = {
-    "content_safety": ContentSafetyPolicy,
-    "rate_limit": RateLimitPolicy,
+    "content_safety": POLICY_CONTENT_SAFETY,
+    "rate_limit": POLICY_RATE_LIMIT,
 }
 
 
@@ -48,10 +56,109 @@ STRICT_BLOCKED_PATTERNS = [
 # enterprise: Strict safety, strict rate limiting, full audit mode
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class PolicyEvaluationResult:
+    decisions: tuple[PolicyDecision, ...]
+    final_outcome: str
+    effective_metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class PolicyPipeline:
+    name: str
+    policies: tuple[Policy, ...]
+
+    def evaluate(self, context: PolicyContext) -> PolicyEvaluationResult:
+        decisions: list[PolicyDecision] = []
+        final_outcome = "allow"
+        for policy in self.policies:
+            decision = policy.evaluate(context)
+            decisions.append(decision)
+            if decision.outcome == DecisionOutcome.DENY:
+                final_outcome = "block"
+        return PolicyEvaluationResult(
+            decisions=tuple(decisions),
+            final_outcome=final_outcome,
+            effective_metadata={},
+        )
+
+
+class ContentSafetyPolicy:
+    def __init__(self, blocked_patterns: list[str], content_key: str = "prompt") -> None:
+        self._blocked_patterns = [p.lower() for p in blocked_patterns]
+        self._content_key = content_key
+        self._policy_id = PolicyId(POLICY_CONTENT_SAFETY)
+        self._policy_version = PolicyVersion("1.0")
+
+    def evaluate(self, context: PolicyContext) -> PolicyDecision:
+        text = str(context.inputs.get(self._content_key, "")).lower()
+        for pattern in self._blocked_patterns:
+            if pattern in text:
+                return PolicyDecision(
+                    outcome=DecisionOutcome.DENY,
+                    reason_code="content_safety.blocked",
+                    reason_message=f"{self._policy_id.value} blocked pattern: {pattern}",
+                    policy_id=self._policy_id,
+                    policy_version=self._policy_version,
+                    tenant_id=context.tenant_id,
+                )
+        return PolicyDecision(
+            outcome=DecisionOutcome.ALLOW,
+            reason_code="content_safety.allow",
+            reason_message=f"{self._policy_id.value} allowed",
+            policy_id=self._policy_id,
+            policy_version=self._policy_version,
+            tenant_id=context.tenant_id,
+        )
+
+
+class RateLimitPolicy:
+    def __init__(
+        self,
+        max_requests: int,
+        window_seconds: int,
+        rate_checker: Optional[Callable[[str, int], int]] = None,
+    ) -> None:
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._rate_checker = rate_checker
+        self._policy_id = PolicyId(POLICY_RATE_LIMIT)
+        self._policy_version = PolicyVersion("1.0")
+
+    def evaluate(self, context: PolicyContext) -> PolicyDecision:
+        if self._rate_checker is None:
+            return PolicyDecision(
+                outcome=DecisionOutcome.ALLOW,
+                reason_code="rate_limit.allow",
+                reason_message=f"{self._policy_id.value} allow",
+                policy_id=self._policy_id,
+                policy_version=self._policy_version,
+                tenant_id=context.tenant_id,
+            )
+        count = self._rate_checker(context.tenant_id.value, self._window_seconds)
+        if count > self._max_requests:
+            return PolicyDecision(
+                outcome=DecisionOutcome.DENY,
+                reason_code="rate_limit.exceeded",
+                reason_message=f"{self._policy_id.value} exceeded",
+                policy_id=self._policy_id,
+                policy_version=self._policy_version,
+                tenant_id=context.tenant_id,
+            )
+        return PolicyDecision(
+            outcome=DecisionOutcome.ALLOW,
+            reason_code="rate_limit.allow",
+            reason_message=f"{self._policy_id.value} allow",
+            policy_id=self._policy_id,
+            policy_version=self._policy_version,
+            tenant_id=context.tenant_id,
+        )
+
+
 def create_pipeline(
     mode: str = "basic_safety",
     enabled_policies: Optional[list[str]] = None,
-) -> Pipeline:
+) -> PolicyPipeline:
     """
     Creates a pipeline based on mode and optional policy override.
     
@@ -74,23 +181,23 @@ def create_pipeline(
     
     # Preset pipelines based on mode
     if mode == "minimal":
-        return Pipeline(name="minimal", policies=[])
+        return PolicyPipeline(name="minimal", policies=tuple())
     
     elif mode == "basic_safety":
-        return Pipeline(
+        return PolicyPipeline(
             name="basic_safety",
-            policies=[
+            policies=(
                 ContentSafetyPolicy(
                     blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
                     content_key="prompt",
                 ),
-            ],
+            ),
         )
     
     elif mode == "standard":
-        return Pipeline(
+        return PolicyPipeline(
             name="standard",
-            policies=[
+            policies=(
                 ContentSafetyPolicy(
                     blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
                     content_key="prompt",
@@ -99,13 +206,13 @@ def create_pipeline(
                     max_requests=100,
                     window_seconds=60,
                 ),
-            ],
+            ),
         )
     
     elif mode == "enterprise":
-        return Pipeline(
+        return PolicyPipeline(
             name="enterprise",
-            policies=[
+            policies=(
                 ContentSafetyPolicy(
                     blocked_patterns=STRICT_BLOCKED_PATTERNS,
                     content_key="prompt",
@@ -115,13 +222,13 @@ def create_pipeline(
                     window_seconds=60,
                 ),
                 # TODO: Add AuditEnforcementPolicy when available
-            ],
+            ),
         )
     
     # Fallback: standard (safe default)
-    return Pipeline(
+    return PolicyPipeline(
         name="standard",
-        policies=[
+        policies=(
             ContentSafetyPolicy(
                 blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
                 content_key="prompt",
@@ -130,7 +237,7 @@ def create_pipeline(
                 max_requests=100,
                 window_seconds=60,
             ),
-        ],
+        ),
     )
 
 
@@ -138,7 +245,7 @@ def build_pipeline_from_names(
     policy_names: list[str],
     rate_checker: Optional[Callable[[str, int], int]] = None,
     blocked_patterns: Optional[list[str]] = None,
-) -> Pipeline:
+) -> PolicyPipeline:
     """
     Builds a pipeline from a list of policy names.
     Used when user explicitly overrides with enabled_policies.
@@ -151,8 +258,7 @@ def build_pipeline_from_names(
     policies: list[Policy] = []
     
     for name in policy_names:
-        policy_class = KNOWN_POLICIES.get(name)
-        if policy_class is None:
+        if name not in KNOWN_POLICIES:
             continue
         
         # Instantiate with appropriate config
@@ -167,11 +273,8 @@ def build_pipeline_from_names(
                 blocked_patterns=blocked_patterns or DEFAULT_BLOCKED_PATTERNS,
                 content_key="prompt",
             ))
-        else:
-            # Generic instantiation
-            policies.append(policy_class())
     
-    return Pipeline(name="custom", policies=policies)
+    return PolicyPipeline(name="custom", policies=tuple(policies))
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +287,7 @@ def create_default_pipeline(
     rate_checker: Optional[Callable[[str, int], int]] = None,
     blocked_patterns: Optional[list[str]] = None,
     content_key: str = "prompt",
-) -> Pipeline:
+) -> PolicyPipeline:
     """
     Legacy function for backward compatibility.
     Use create_pipeline("standard") instead.
@@ -192,7 +295,7 @@ def create_default_pipeline(
     return create_pipeline("standard")
 
 
-def create_minimal_pipeline() -> Pipeline:
+def create_minimal_pipeline() -> PolicyPipeline:
     """
     Legacy function for backward compatibility.
     Use create_pipeline("minimal") instead.
@@ -202,7 +305,7 @@ def create_minimal_pipeline() -> Pipeline:
 
 def create_strict_pipeline(
     blocked_patterns: Optional[list[str]] = None,
-) -> Pipeline:
+) -> PolicyPipeline:
     """
     Legacy function for backward compatibility.
     Use create_pipeline("enterprise") instead.

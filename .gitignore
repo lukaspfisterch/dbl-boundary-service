@@ -6,6 +6,9 @@ dist/
 build/
 *.egg
 
+# Logs
+logs/
+
 # Virtual environment
 venv/
 .venv/
