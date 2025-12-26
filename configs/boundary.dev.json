@@ -2,6 +2,8 @@
     "api_key": null,
     "model": "gpt-4.1-mini",
     "dbl_pipeline": "default",
+    "boundary_id": "dbl-boundary-service",
+    "boundary_version": "0.2.0",
     "host": "127.0.0.1",
     "port": 8787
   }

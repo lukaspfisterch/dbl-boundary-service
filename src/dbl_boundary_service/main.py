@@ -16,6 +16,7 @@ from .config import get_dev_config, BoundaryConfig
 from .security import api_key_store
 from .web.ui import render_index
 from .boundary_flow import BoundaryRequest, run_boundary_flow
+from .pipeline_factory import PIPELINE_MODES, KNOWN_POLICY_NAMES
 from .telemetry import event_bus, setup_logging, RunLogEntry, append_run_log
 
 logger = logging.getLogger("dbl_boundary_service")
@@ -34,6 +35,22 @@ class RunRequest(BaseModel):
     dry_run: bool = False
     pipeline_mode: str = "basic_safety"  # minimal, basic_safety, standard, enterprise
     enabled_policies: Optional[list[str]] = None  # Explicit policy override
+
+
+def _admission_check(request: RunRequest) -> tuple[bool, str, str]:
+    if not request.prompt.strip():
+        return False, "admission.invalid_prompt", "prompt must be non-empty"
+    if request.max_tokens < 1 or request.max_tokens > 8192:
+        return False, "admission.invalid_max_tokens", "max_tokens must be between 1 and 8192"
+    if request.temperature < 0.0 or request.temperature > 2.0:
+        return False, "admission.invalid_temperature", "temperature must be between 0.0 and 2.0"
+    if request.pipeline_mode not in PIPELINE_MODES:
+        return False, "admission.invalid_pipeline_mode", "pipeline_mode is not recognized"
+    if request.enabled_policies:
+        unknown = [p for p in request.enabled_policies if p not in KNOWN_POLICY_NAMES]
+        if unknown:
+            return False, "admission.invalid_policy_override", f"unknown policies: {', '.join(unknown)}"
+    return True, "", ""
 
 
 @asynccontextmanager
@@ -123,12 +140,26 @@ def create_app() -> FastAPI:
         if _config is None:
             raise HTTPException(status_code=500, detail="Service not initialized")
         
-        if not api_key_store.is_set() and not request.dry_run:
-            raise HTTPException(status_code=400, detail="API key not set. Use /set-key first or enable dry_run.")
-        
         request_id = str(uuid4())
         event_bus.ensure_queue(request_id)
         await event_bus.emit(request_id, "request_received", {"dry_run": request.dry_run})
+
+        if not api_key_store.is_set() and not request.dry_run:
+            await event_bus.emit(request_id, "blocked", {"reason": "admission.missing_api_key"})
+            await event_bus.finish(request_id)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "admission.missing_api_key",
+                    "message": "API key not set. Use /set-key first or enable dry_run.",
+                },
+            )
+
+        ok, reason_code, reason_message = _admission_check(request)
+        if not ok:
+            await event_bus.emit(request_id, "blocked", {"reason": reason_code})
+            await event_bus.finish(request_id)
+            raise HTTPException(status_code=400, detail={"error_code": reason_code, "message": reason_message})
 
         boundary_request = BoundaryRequest(
             prompt=request.prompt,
@@ -189,6 +220,8 @@ def create_app() -> FastAPI:
                 "block_reason": response.snapshot.block_reason,
                 "dry_run": response.snapshot.dry_run,
             },
+            "v_events": response.v_events,
+            "observations": response.observations,
         }
 
     return app

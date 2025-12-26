@@ -9,6 +9,7 @@ from dbl_policy import (
     PolicyDecision,
     PolicyId,
     PolicyVersion,
+    TenantId,
 )
 
 
@@ -19,6 +20,9 @@ from dbl_policy import (
 
 POLICY_CONTENT_SAFETY = "content-safety"
 POLICY_RATE_LIMIT = "rate-limit"
+POLICY_BOUNDARY_DEFAULT = "boundary-default"
+PIPELINE_MODES = {"minimal", "basic_safety", "standard", "enterprise"}
+KNOWN_POLICY_NAMES = {"content_safety", "rate_limit"}
 
 KNOWN_POLICIES = {
     "content_safety": POLICY_CONTENT_SAFETY,
@@ -66,6 +70,9 @@ class PolicyEvaluationResult:
 @dataclass(frozen=True)
 class PolicyPipeline:
     name: str
+    boundary_id: str
+    boundary_version: str
+    policy_specs: tuple[dict[str, object], ...]
     policies: tuple[Policy, ...]
 
     def evaluate(self, context: PolicyContext) -> PolicyEvaluationResult:
@@ -76,11 +83,30 @@ class PolicyPipeline:
             decisions.append(decision)
             if decision.outcome == DecisionOutcome.DENY:
                 final_outcome = "block"
+        if not decisions:
+            decisions.append(
+                PolicyDecision(
+                    outcome=DecisionOutcome.ALLOW,
+                    reason_code="boundary.default_allow",
+                    reason_message="boundary default allow",
+                    policy_id=PolicyId(POLICY_BOUNDARY_DEFAULT),
+                    policy_version=PolicyVersion(self.boundary_version),
+                    tenant_id=context.tenant_id,
+                )
+            )
         return PolicyEvaluationResult(
             decisions=tuple(decisions),
             final_outcome=final_outcome,
             effective_metadata={},
         )
+
+    def describe_config(self) -> dict[str, object]:
+        return {
+            "boundary_id": self.boundary_id,
+            "boundary_version": self.boundary_version,
+            "pipeline_mode": self.name,
+            "policies": list(self.policy_specs),
+        }
 
 
 class ContentSafetyPolicy:
@@ -110,6 +136,16 @@ class ContentSafetyPolicy:
             policy_version=self._policy_version,
             tenant_id=context.tenant_id,
         )
+
+    def describe(self) -> dict[str, object]:
+        return {
+            "policy_id": self._policy_id.value,
+            "policy_version": self._policy_version.value,
+            "config": {
+                "blocked_patterns": list(self._blocked_patterns),
+                "content_key": self._content_key,
+            },
+        }
 
 
 class RateLimitPolicy:
@@ -154,10 +190,22 @@ class RateLimitPolicy:
             tenant_id=context.tenant_id,
         )
 
+    def describe(self) -> dict[str, object]:
+        return {
+            "policy_id": self._policy_id.value,
+            "policy_version": self._policy_version.value,
+            "config": {
+                "max_requests": self._max_requests,
+                "window_seconds": self._window_seconds,
+            },
+        }
+
 
 def create_pipeline(
     mode: str = "basic_safety",
     enabled_policies: Optional[list[str]] = None,
+    boundary_id: str = "dbl-boundary-service",
+    boundary_version: str = "0.2.0",
 ) -> PolicyPipeline:
     """
     Creates a pipeline based on mode and optional policy override.
@@ -177,67 +225,84 @@ def create_pipeline(
     """
     # If explicit policies provided, user override has priority
     if enabled_policies is not None:
-        return build_pipeline_from_names(enabled_policies)
+        return build_pipeline_from_names(
+            enabled_policies,
+            boundary_id=boundary_id,
+            boundary_version=boundary_version,
+        )
     
     # Preset pipelines based on mode
     if mode == "minimal":
-        return PolicyPipeline(name="minimal", policies=tuple())
+        return PolicyPipeline(
+            name="minimal",
+            boundary_id=boundary_id,
+            boundary_version=boundary_version,
+            policy_specs=tuple(),
+            policies=tuple(),
+        )
     
     elif mode == "basic_safety":
+        policy = ContentSafetyPolicy(
+            blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
+            content_key="prompt",
+        )
         return PolicyPipeline(
             name="basic_safety",
-            policies=(
-                ContentSafetyPolicy(
-                    blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
-                    content_key="prompt",
-                ),
-            ),
+            boundary_id=boundary_id,
+            boundary_version=boundary_version,
+            policy_specs=(policy.describe(),),
+            policies=(policy,),
         )
     
     elif mode == "standard":
+        policy_a = ContentSafetyPolicy(
+            blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
+            content_key="prompt",
+        )
+        policy_b = RateLimitPolicy(
+            max_requests=100,
+            window_seconds=60,
+        )
         return PolicyPipeline(
             name="standard",
-            policies=(
-                ContentSafetyPolicy(
-                    blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
-                    content_key="prompt",
-                ),
-                RateLimitPolicy(
-                    max_requests=100,
-                    window_seconds=60,
-                ),
-            ),
+            boundary_id=boundary_id,
+            boundary_version=boundary_version,
+            policy_specs=(policy_a.describe(), policy_b.describe()),
+            policies=(policy_a, policy_b),
         )
     
     elif mode == "enterprise":
+        policy_a = ContentSafetyPolicy(
+            blocked_patterns=STRICT_BLOCKED_PATTERNS,
+            content_key="prompt",
+        )
+        policy_b = RateLimitPolicy(
+            max_requests=10,
+            window_seconds=60,
+        )
         return PolicyPipeline(
             name="enterprise",
-            policies=(
-                ContentSafetyPolicy(
-                    blocked_patterns=STRICT_BLOCKED_PATTERNS,
-                    content_key="prompt",
-                ),
-                RateLimitPolicy(
-                    max_requests=10,
-                    window_seconds=60,
-                ),
-                # TODO: Add AuditEnforcementPolicy when available
-            ),
+            boundary_id=boundary_id,
+            boundary_version=boundary_version,
+            policy_specs=(policy_a.describe(), policy_b.describe()),
+            policies=(policy_a, policy_b),
         )
     
     # Fallback: standard (safe default)
+    policy_a = ContentSafetyPolicy(
+        blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
+        content_key="prompt",
+    )
+    policy_b = RateLimitPolicy(
+        max_requests=100,
+        window_seconds=60,
+    )
     return PolicyPipeline(
         name="standard",
-        policies=(
-            ContentSafetyPolicy(
-                blocked_patterns=DEFAULT_BLOCKED_PATTERNS,
-                content_key="prompt",
-            ),
-            RateLimitPolicy(
-                max_requests=100,
-                window_seconds=60,
-            ),
-        ),
+        boundary_id=boundary_id,
+        boundary_version=boundary_version,
+        policy_specs=(policy_a.describe(), policy_b.describe()),
+        policies=(policy_a, policy_b),
     )
 
 
@@ -245,6 +310,8 @@ def build_pipeline_from_names(
     policy_names: list[str],
     rate_checker: Optional[Callable[[str, int], int]] = None,
     blocked_patterns: Optional[list[str]] = None,
+    boundary_id: str = "dbl-boundary-service",
+    boundary_version: str = "0.2.0",
 ) -> PolicyPipeline:
     """
     Builds a pipeline from a list of policy names.
@@ -274,7 +341,14 @@ def build_pipeline_from_names(
                 content_key="prompt",
             ))
     
-    return PolicyPipeline(name="custom", policies=tuple(policies))
+    policy_specs = tuple(p.describe() for p in policies)
+    return PolicyPipeline(
+        name="custom",
+        boundary_id=boundary_id,
+        boundary_version=boundary_version,
+        policy_specs=policy_specs,
+        policies=tuple(policies),
+    )
 
 
 # ---------------------------------------------------------------------------

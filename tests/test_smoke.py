@@ -146,8 +146,9 @@ def test_minimal_mode_allows_all() -> None:
         snapshot = data.get("snapshot", {})
         assert snapshot.get("dbl_outcome") == "allow"
         policy_decisions = snapshot.get("policy_decisions", [])
-        # Minimal mode: no policies, so empty decisions list
-        assert len(policy_decisions) == 0
+        # Minimal mode: emits a default allow decision
+        assert len(policy_decisions) == 1
+        assert policy_decisions[0].get("policy") == "boundary-default"
 
 
 def test_standard_mode_has_multiple_policies() -> None:

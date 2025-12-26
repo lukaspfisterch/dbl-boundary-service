@@ -20,6 +20,8 @@ class BoundaryConfig:
     api_key: Optional[str]
     model: str
     dbl_pipeline: str
+    boundary_id: str
+    boundary_version: str
     host: str
     port: int
 
@@ -29,6 +31,8 @@ class BoundaryConfig:
             api_key=d.get("api_key"),
             model=d.get("model", "gpt-4.1-mini"),
             dbl_pipeline=d.get("dbl_pipeline", "default"),
+            boundary_id=d.get("boundary_id", "dbl-boundary-service"),
+            boundary_version=d.get("boundary_version", "0.2.0"),
             host=d.get("host", "127.0.0.1"),
             port=int(d.get("port", 8787)),
         )
@@ -76,6 +80,8 @@ def get_dev_config() -> BoundaryConfig:
         api_key=None,
         model="gpt-4.1-mini",
         dbl_pipeline="default",
+        boundary_id="dbl-boundary-service",
+        boundary_version="0.2.0",
         host="127.0.0.1",
         port=8787,
     )

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional, Awaitable, Callable
+from typing import Any, Optional, Awaitable, Callable, Mapping
 from time import perf_counter
 from uuid import uuid4
+import hashlib
+import json
 
 from kl_kernel_logic import PsiDefinition
-from dbl_policy import DecisionOutcome, PolicyContext, PolicyDecision, TenantId
+from dbl_core import DblEvent, DblEventKind
+from dbl_policy import DecisionOutcome, PolicyContext, PolicyDecision, TenantId, decision_to_dbl_event
 
 from .config import BoundaryConfig
 from .llm_adapter import LlmPayload, LlmResult, call_openai_chat, dry_run_llm
@@ -98,13 +101,21 @@ class BoundaryResponse:
     pipeline_mode: str
     dbl_outcome: str
     block_reason: Optional[str]
+    v_events: list[dict[str, Any]]
+    observations: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
 # Pipeline selection
 # ---------------------------------------------------------------------------
 
-def _get_pipeline(mode: str, enabled_policies: Optional[list[str]] = None) -> PolicyPipeline:
+def _get_pipeline(
+    mode: str,
+    enabled_policies: Optional[list[str]] = None,
+    *,
+    boundary_id: str,
+    boundary_version: str,
+) -> PolicyPipeline:
     """
     Select pipeline based on mode and optional policy override.
     
@@ -112,7 +123,12 @@ def _get_pipeline(mode: str, enabled_policies: Optional[list[str]] = None) -> Po
         mode: Preset mode (minimal, basic_safety, standard, enterprise)
         enabled_policies: Optional explicit list of policies (overrides preset)
     """
-    return create_pipeline(mode=mode, enabled_policies=enabled_policies)
+    return create_pipeline(
+        mode=mode,
+        enabled_policies=enabled_policies,
+        boundary_id=boundary_id,
+        boundary_version=boundary_version,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,14 +190,10 @@ async def run_boundary_flow(
     # The 'prompt' key is required by ContentSafetyPolicy.
     # -------------------------------------------------------------------------
     tenant_value = request.tenant_id or "default"
+    authoritative_context = _build_authoritative_context(envelope, tenant_value)
     policy_context = PolicyContext(
         tenant_id=TenantId(tenant_value),
-        inputs={
-            **envelope.to_metadata(),
-            "caller_id": envelope.caller_id,
-            "tenant_id": tenant_value,
-            "channel": envelope.channel,
-        },
+        inputs=authoritative_context,
     )
     if event_emitter:
         await event_emitter(request_id, "boundary_context_built", {"tenant_id": request.tenant_id, "channel": request.channel})
@@ -191,7 +203,12 @@ async def run_boundary_flow(
     # Policies decide: allow / modify / block
     # User can override with enabled_policies
     # -------------------------------------------------------------------------
-    pipeline = _get_pipeline(request.pipeline_mode, request.enabled_policies)
+    pipeline = _get_pipeline(
+        request.pipeline_mode,
+        request.enabled_policies,
+        boundary_id=config.boundary_id,
+        boundary_version=config.boundary_version,
+    )
     policy_start = perf_counter()
     dbl_result = pipeline.evaluate(policy_context)
     policy_eval_ms = (perf_counter() - policy_start) * 1000.0
@@ -214,7 +231,7 @@ async def run_boundary_flow(
             "psi_name": psi.name,
             "tenant_id": request.tenant_id,
             "channel": request.channel,
-            "metadata": dict(envelope.to_metadata()),
+            "metadata": dict(authoritative_context),
         },
         policy_decisions=policy_decisions,
         dbl_outcome=dbl_result.final_outcome,
@@ -227,6 +244,31 @@ async def run_boundary_flow(
     )
     
     # -------------------------------------------------------------------------
+    # Build V events (normative only)
+    boundary_config = pipeline.describe_config()
+    boundary_config["model"] = config.model
+    boundary_config_digest = _sha256_hex(_canonical_json(boundary_config))
+    intent_event = DblEvent(
+        DblEventKind.INTENT,
+        correlation_id=request_id,
+        data={
+            "context": dict(authoritative_context),
+            "metadata": {
+                "boundary_id": pipeline.boundary_id,
+                "boundary_version": pipeline.boundary_version,
+                "boundary_config_digest": boundary_config_digest,
+            },
+        },
+    )
+    decision_events = [
+        decision_to_dbl_event(decision, correlation_id=request_id)
+        for decision in dbl_result.decisions
+    ]
+    v_events: list[dict[str, Any]] = [
+        intent_event.to_dict(include_observational=False),
+        *[e.to_dict(include_observational=False) for e in decision_events],
+    ]
+
     # Step 4: Check DBL decision
     # -------------------------------------------------------------------------
     if dbl_result.final_outcome == "block":
@@ -247,6 +289,15 @@ async def run_boundary_flow(
             pipeline_mode=request.pipeline_mode,
             dbl_outcome=dbl_result.final_outcome,
             block_reason=snapshot.block_reason,
+            v_events=v_events,
+            observations=_build_observations(
+                request_id=request_id,
+                timestamp=timestamp,
+                execution_trace_id=None,
+                dry_run=dry_run,
+                policy_eval_ms=policy_eval_ms,
+                llm_call_ms=None,
+            ),
         )
     
     # -------------------------------------------------------------------------
@@ -309,6 +360,15 @@ async def run_boundary_flow(
         pipeline_mode=request.pipeline_mode,
         dbl_outcome=dbl_result.final_outcome,
         block_reason=None,
+        v_events=v_events,
+        observations=_build_observations(
+            request_id=request_id,
+            timestamp=timestamp,
+            execution_trace_id=trace_id,
+            dry_run=dry_run,
+            policy_eval_ms=policy_eval_ms,
+            llm_call_ms=llm_call_ms,
+        ),
     )
 
 
@@ -332,4 +392,44 @@ def _block_reason_from_decisions(decisions: tuple[PolicyDecision, ...]) -> str:
         return "Blocked by policy"
     last = decisions[-1]
     return last.reason_message or last.reason_code
+
+
+def _build_authoritative_context(envelope: RequestEnvelope, tenant_value: str) -> dict[str, Any]:
+    return {
+        "prompt": envelope.prompt,
+        "prompt_length": len(envelope.prompt),
+        "model": envelope.model,
+        "max_tokens": envelope.max_tokens,
+        "temperature": envelope.temperature,
+        "caller_id": envelope.caller_id,
+        "tenant_id": tenant_value,
+        "channel": envelope.channel,
+    }
+
+
+def _canonical_json(data: Mapping[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _build_observations(
+    *,
+    request_id: str,
+    timestamp: str,
+    execution_trace_id: Optional[str],
+    dry_run: bool,
+    policy_eval_ms: float,
+    llm_call_ms: Optional[float],
+) -> dict[str, Any]:
+    return {
+        "request_id": request_id,
+        "timestamp": timestamp,
+        "execution_trace_id": execution_trace_id,
+        "dry_run": dry_run,
+        "policy_eval_ms": policy_eval_ms,
+        "llm_call_ms": llm_call_ms,
+    }
 
