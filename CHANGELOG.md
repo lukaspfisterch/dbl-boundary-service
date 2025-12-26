@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 (2025-12-26)
+
+- Boundary versioning metadata recorded in INTENT events
+- Admission gate with explicit reject reason codes
+- Normative V events separated from observational outputs
+- Formal authoritative context contract and boundary docs
+
 ## 0.2.0 (2024-12-04)
 
 - Pipeline modes: minimal, basic_safety, standard, enterprise
